@@ -4,15 +4,8 @@
  * Description:
  * A wearable safety device on the TinyCircuit platform that sends a
  * Telegram alert when a button is pressed or a fall is detected.
- * This version displays live accelerometer data on the screen.
- *
- * Hardware:
- * - Tinyscreen+ (ASM2022)
- * - TinyShield WiFi Board (ASD2123-R)
- * - Sensor Board (ASD211) with BMA250
- * - Large Button Wireling (AST1028)
- *
- * Written for the TinyCircuits platform.
+ * This version sends an HTTP request to an intermediate Python server, which
+ * then securely forwards the alert to Telegram.
  ************************************************************************/
 
 // Included Libraries
@@ -26,39 +19,38 @@
 // -----------------------------------------------------------------------------
 // USER CONFIGURATION SECTION
 // -----------------------------------------------------------------------------
-// All sensitive data is now stored in the 'secrets.h' file.
+// All user-specific settings (WiFi credentials, server IP, and port)
+// have been moved to the 'secrets.h' file for better organization.
 #include "secrets.h"
 // -----------------------------------------------------------------------------
 
 // Hardware Pin Definitions
 #define BUTTON_PIN A1 // Large Button Wireling is connected to pin A1
 
-// WiFi and Network Configuration
-char server[] = "api.telegram.org";
-WiFiSSLClient client;
+// Network Client
+WiFiClient client;
 
 // Initialize Hardware Objects
 TinyScreen display = TinyScreen(TinyScreenPlus);
 BMA250 accel_sensor;
 
-// Fall Detection Thresholds
-const float FREEFALL_THRESHOLD = 0.4; // g-force threshold for freefall (e.g., < 0.4g)
-const float IMPACT_THRESHOLD = 3.0;   // g-force threshold for impact (e.g., > 3.0g)
-bool isFallDetected = false;
+// =============================================================================
+// MODIFIED FALL DETECTION THRESHOLDS
+// These values have been adjusted to be more sensitive to realistic falls.
+// =============================================================================
+const float FREEFALL_THRESHOLD = 0.6; // Increased from 0.4 to catch slower falls.
+const float IMPACT_THRESHOLD = 2.2;   // Lowered from 3.0 to detect softer impacts.
+// =============================================================================
 
-// Cooldown period to prevent spamming alerts (in milliseconds)
+
+// Cooldown period to prevent spamming alerts
 const unsigned long ALERT_COOLDOWN = 10000; // 10 seconds
 unsigned long lastAlertTime = 0;
 
-
 void setup() {
-  // Start Serial for debugging (optional)
   Serial.begin(9600);
-
-  // Initialize I2C for the accelerometer
   Wire.begin();
   
-  // Initialize the TinyScreen display
   display.begin();
   display.setBrightness(10);
   display.setFont(thinPixel7_10ptFontInfo);
@@ -67,15 +59,13 @@ void setup() {
   display.print("Guardian V2 Booting...");
   delay(1000);
 
-  // Initialize the Large Button Wireling pin
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 
-  // Initialize the BMA250 accelerometer
   if (accel_sensor.begin(BMA250_range_4g, BMA250_update_time_64ms) != 0) {
     display.clearScreen();
     display.setCursor(10, 20);
     display.print("Accel Fail!");
-    while(1); // Halt if sensor fails
+    while(1);
   } else {
     display.clearScreen();
     display.setCursor(15, 20);
@@ -85,93 +75,51 @@ void setup() {
     display.fontColor(TS_8b_White, TS_8b_Black);
   }
 
-  // Set WiFi pins - VERY IMPORTANT for TinyShield WiFi
   WiFi.setPins(8, 2, A3, -1);
   
-  // Check if the WiFi shield is present
   if (WiFi.status() == WL_NO_SHIELD) {
     display.clearScreen();
     display.setCursor(10, 20);
     display.print("WiFi Fail!");
-    while (true); // Halt if no shield
+    while (true);
   }
 
-  // Connect to WiFi
   connectWiFi();
 
-  // Device is ready
   display.clearScreen();
-  display.setCursor(25, 5); // Move "Armed" to the top of the screen
+  display.setCursor(25, 5);
   display.fontColor(TS_8b_Green, TS_8b_Black);
   display.print("Armed");
 }
 
 
 void loop() {
-  // Check if enough time has passed since the last alert to re-arm
   if (millis() - lastAlertTime > ALERT_COOLDOWN) {
-    
-    // 1. Check for manual button press
     if (digitalRead(BUTTON_PIN) == LOW) {
-      display.clearScreen();
-      display.setCursor(10, 20);
-      display.print("Button Press!");
-      delay(500);
       sendTelegramAlert("Manual alert triggered!");
       lastAlertTime = millis();
     }
 
-    // 2. Check for a fall
     if (checkForFall()) {
-      display.clearScreen();
-      display.setCursor(15, 20);
-      display.print("Fall Detected!");
-      delay(500);
       sendTelegramAlert("Fall detected!");
       lastAlertTime = millis();
     }
   }
-
-  // Update the display with live accelerometer data
   updateDisplay();
-  
-  // Add a small delay to make the display readable
   delay(100);
 }
 
-/**
- * @brief Updates the display with live data from the BMA250.
- */
 void updateDisplay() {
   accel_sensor.read();
-  
   display.fontColor(TS_8b_White, TS_8b_Black);
-
-  // Create formatted strings for each axis
-  String x_str = "X: " + String(accel_sensor.X);
-  String y_str = "Y: " + String(accel_sensor.Y);
-  String z_str = "Z: " + String(accel_sensor.Z);
-
-  // Set cursor and print X value, adding spaces to clear old characters
   display.setCursor(10, 25);
-  display.print(x_str);
-  for (int i = x_str.length(); i < 15; i++) { display.print(" "); }
-
-  // Set cursor and print Y value
+  display.print("X: " + String(accel_sensor.X) + "   ");
   display.setCursor(10, 35);
-  display.print(y_str);
-  for (int i = y_str.length(); i < 15; i++) { display.print(" "); }
-  
-  // Set cursor and print Z value
+  display.print("Y: " + String(accel_sensor.Y) + "   ");
   display.setCursor(10, 45);
-  display.print(z_str);
-  for (int i = z_str.length(); i < 15; i++) { display.print(" "); }
+  display.print("Z: " + String(accel_sensor.Z) + "   ");
 }
 
-
-/**
- * @brief Connects to the configured WiFi network.
- */
 void connectWiFi() {
   display.clearScreen();
   display.setCursor(5, 20);
@@ -193,23 +141,20 @@ void connectWiFi() {
   delay(2000);
 }
 
-
-/**
- * @brief Sends an alert message to the configured Telegram chat.
- * @param event_message The message describing the event.
- */
 void sendTelegramAlert(String event_message) {
   display.clearScreen();
   display.setCursor(10, 20);
   display.fontColor(TS_8b_Yellow, TS_8b_Black);
   display.print("Sending Alert...");
   
-  if (client.connect(server, 443)) {
-    String message = "Guardian V2 Alert: " + event_message;
-    message.replace(" ", "%20");
+  // Connect to the server using credentials from secrets.h
+  if (client.connect(SECRET_SERVER_IP, SECRET_SERVER_PORT)) {
+    event_message.replace(" ", "%20");
+    String url = "/send_alert?event_message=" + event_message;
     
-    client.println("GET /bot" + String(SECRET_BOT_TOKEN) + "/sendMessage?chat_id=" + String(SECRET_CHAT_ID) + "&text=" + message);
-    client.println("Host: " + String(server));
+    client.print(String("GET ") + url + " HTTP/1.1\r\n");
+    // Use the Host IP from secrets.h
+    client.print(String("Host: ") + SECRET_SERVER_IP + "\r\n");
     client.println("Connection: close");
     client.println();
     
@@ -228,28 +173,28 @@ void sendTelegramAlert(String event_message) {
   client.stop();
   delay(2000);
   
-  // Return to Armed screen state; the loop will handle coordinate display
   display.clearScreen();
-  display.setCursor(25, 5); // Reset to the same top position
+  display.setCursor(25, 5);
   display.fontColor(TS_8b_Green, TS_8b_Black);
   display.print("Armed");
 }
 
-
-/**
- * @brief Checks the accelerometer for a fall event.
- * @return True if a fall is detected, false otherwise.
- */
 bool checkForFall() {
   static bool freefall_flag = false;
   static unsigned long freefall_time = 0;
 
   accel_sensor.read();
   
-  float x_g = accel_sensor.X / 1024.0;
-  float y_g = accel_sensor.Y / 1024.0;
-  float z_g = accel_sensor.Z / 1024.0;
+  // Correct divisor for +/- 4g range is 256.0
+  float x_g = accel_sensor.X / 256.0;
+  float y_g = accel_sensor.Y / 256.0;
+  float z_g = accel_sensor.Z / 256.0;
   float total_g = sqrt(pow(x_g, 2) + pow(y_g, 2) + pow(z_g, 2));
+
+  // --- DEBUGGING: Use the Serial Monitor in the Arduino IDE to see these values ---
+  Serial.print("Total G-force: ");
+  Serial.println(total_g);
+  // -------------------------------------------------------------------------------
 
   if (total_g < FREEFALL_THRESHOLD) {
     freefall_flag = true;
@@ -259,9 +204,11 @@ bool checkForFall() {
   if (freefall_flag) {
     if (total_g > IMPACT_THRESHOLD) {
       freefall_flag = false;
-      return true;
+      return true; // Fall detected!
     }
-    if (millis() - freefall_time > 1000) {
+    
+    // MODIFIED: Reset the flag if no impact is detected within 1.2 seconds
+    if (millis() - freefall_time > 1200) {
       freefall_flag = false;
     }
   }
