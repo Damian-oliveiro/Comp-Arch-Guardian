@@ -126,3 +126,37 @@ The server acts as a bridge, listening for simple HTTP requests from the TinyScr
 │   └── .env                 # (You create this) Stores Telegram secrets
 └── README.md                # This file
 ```
+
+Step 1: Google Cloud & API Setup
+
+Before writing any code, you need to set up the backend services that will determine the location.
+
+    Create a Google Cloud Project:
+
+        Go to the Google Cloud Console.
+
+        Create a new project (e.g., "Guardian-Project").
+
+    Enable Required APIs:
+
+        In your project, navigate to the "API Library".
+
+        Search for and enable the following two APIs:
+
+            Geolocation API: This is the service that converts Wi-Fi scan data into coordinates.
+
+            Geocoding API: This is the service that converts coordinates (latitude/longitude) into a human-readable street address.
+
+    Create an API Key:
+
+        Navigate to "APIs & Services" > "Credentials".
+
+        Click "Create Credentials" and select "API key".
+
+        Copy the generated API key. Treat this key like a password.
+
+        Crucially, for security, click on the new key and restrict it to only be used with the "Geolocation API" and "Geocoding API".
+
+You will use this API key in the Python server configuration.
+
+NOTE: use this API key you created in the GCP project, not the geolocation API key

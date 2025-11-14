@@ -1,11 +1,10 @@
 /*************************************************************************
- * Guardian V2 - Standalone IoT Safety & Location Beacon
+ * Guardian V3 - Standalone IoT Safety & Location Beacon w/ WiFi Geolocation
  * 
  * Description:
- * A wearable safety device on the TinyCircuit platform that sends a
- * Telegram alert when a button is pressed or a fall is detected.
- * This version sends an HTTP request to an intermediate Python server, which
- * then securely forwards the alert to Telegram.
+ * This version scans for nearby WiFi networks and sends their data to a 
+ * server. The server then uses this data to estimate the device's location
+ * and includes it in the Telegram alert.
  ************************************************************************/
 
 // Included Libraries
@@ -16,16 +15,10 @@
 #include <BMA250.h>
 #include <math.h>
 
-// -----------------------------------------------------------------------------
-// USER CONFIGURATION SECTION
-// -----------------------------------------------------------------------------
-// All user-specific settings (WiFi credentials, server IP, and port)
-// have been moved to the 'secrets.h' file for better organization.
 #include "secrets.h"
-// -----------------------------------------------------------------------------
 
 // Hardware Pin Definitions
-#define BUTTON_PIN A1 // Large Button Wireling is connected to pin A1
+#define BUTTON_PIN A1
 
 // Network Client
 WiFiClient client;
@@ -34,18 +27,14 @@ WiFiClient client;
 TinyScreen display = TinyScreen(TinyScreenPlus);
 BMA250 accel_sensor;
 
-// =============================================================================
-// MODIFIED FALL DETECTION THRESHOLDS
-// These values have been adjusted to be more sensitive to realistic falls.
-// =============================================================================
-const float FREEFALL_THRESHOLD = 0.6; // Increased from 0.4 to catch slower falls.
-const float IMPACT_THRESHOLD = 2.2;   // Lowered from 3.0 to detect softer impacts.
-// =============================================================================
-
+// Fall Detection Thresholds
+const float FREEFALL_THRESHOLD = 0.6;
+const float IMPACT_THRESHOLD = 2.2;
 
 // Cooldown period to prevent spamming alerts
 const unsigned long ALERT_COOLDOWN = 10000; // 10 seconds
 unsigned long lastAlertTime = 0;
+
 
 void setup() {
   Serial.begin(9600);
@@ -56,7 +45,7 @@ void setup() {
   display.setFont(thinPixel7_10ptFontInfo);
   display.fontColor(TS_8b_White, TS_8b_Black);
   display.setCursor(5, 20);
-  display.print("Guardian V2 Booting...");
+  display.print("Guardian V3 Booting...");
   delay(1000);
 
   pinMode(BUTTON_PIN, INPUT_PULLUP);
@@ -92,7 +81,6 @@ void setup() {
   display.print("Armed");
 }
 
-
 void loop() {
   if (millis() - lastAlertTime > ALERT_COOLDOWN) {
     if (digitalRead(BUTTON_PIN) == LOW) {
@@ -101,7 +89,7 @@ void loop() {
     }
 
     if (checkForFall()) {
-      sendTelegramAlert("Fall detected!");
+      sendTelegramAlert("Fall detected! Joseph is at risk! LOL weak!");
       lastAlertTime = millis();
     }
   }
@@ -141,19 +129,74 @@ void connectWiFi() {
   delay(2000);
 }
 
+
+/*************************************************************************
+ * NEW FUNCTION: getWifiScanData
+ * Scans for nearby WiFi networks and formats them into a single string
+ * for the server. Format: "MAC1,RSSI1;MAC2,RSSI2;..."
+ ************************************************************************/
+String getWifiScanData() {
+  display.setCursor(0, 55);
+  display.fontColor(TS_8b_Blue, TS_8b_Black); // <-- CORRECTED LINE
+  display.print("Scanning WiFi...");
+
+  String payload = "";
+  int num_networks = WiFi.scanNetworks();
+
+  display.clearScreen(); // Clear screen before showing results
+  
+  if (num_networks == 0) {
+    display.setCursor(5, 20);
+    display.print("No networks found.");
+    delay(1000);
+    return "none";
+  }
+
+  // Limit to the 7 strongest networks to keep URL length manageable
+  int networks_to_send = min(num_networks, 7);
+  for (int i = 0; i < networks_to_send; i++) {
+    uint8_t bssid[6];
+    WiFi.BSSID(i, bssid);
+    
+    char mac_addr[18];
+    sprintf(mac_addr, "%02X:%02X:%02X:%02X:%02X:%02X", bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+    
+    payload += String(mac_addr);
+    payload += ",";
+    payload += WiFi.RSSI(i);
+    
+    if (i < networks_to_send - 1) {
+      payload += ";";
+    }
+  }
+  
+  display.setCursor(0, 55);
+  display.fontColor(TS_8b_White, TS_8b_Black);
+  display.print("Scan Complete!  "); // Extra spaces to clear old text
+  return payload;
+}
+
+
+/*************************************************************************
+ * MODIFIED FUNCTION: sendTelegramAlert
+ * Now includes the WiFi scan data in the GET request to the server.
+ ************************************************************************/
 void sendTelegramAlert(String event_message) {
   display.clearScreen();
   display.setCursor(10, 20);
   display.fontColor(TS_8b_Yellow, TS_8b_Black);
   display.print("Sending Alert...");
+
+  // Get WiFi scan data before sending the alert
+  String wifi_data = getWifiScanData();
   
-  // Connect to the server using credentials from secrets.h
   if (client.connect(SECRET_SERVER_IP, SECRET_SERVER_PORT)) {
     event_message.replace(" ", "%20");
-    String url = "/send_alert?event_message=" + event_message;
+    
+    // Append the WiFi scan data to the URL
+    String url = "/send_alert?event_message=" + event_message + "&wifi_scan=" + wifi_data;
     
     client.print(String("GET ") + url + " HTTP/1.1\r\n");
-    // Use the Host IP from secrets.h
     client.print(String("Host: ") + SECRET_SERVER_IP + "\r\n");
     client.println("Connection: close");
     client.println();
@@ -185,16 +228,13 @@ bool checkForFall() {
 
   accel_sensor.read();
   
-  // Correct divisor for +/- 4g range is 256.0
   float x_g = accel_sensor.X / 256.0;
   float y_g = accel_sensor.Y / 256.0;
   float z_g = accel_sensor.Z / 256.0;
   float total_g = sqrt(pow(x_g, 2) + pow(y_g, 2) + pow(z_g, 2));
 
-  // --- DEBUGGING: Use the Serial Monitor in the Arduino IDE to see these values ---
   Serial.print("Total G-force: ");
   Serial.println(total_g);
-  // -------------------------------------------------------------------------------
 
   if (total_g < FREEFALL_THRESHOLD) {
     freefall_flag = true;
@@ -207,7 +247,6 @@ bool checkForFall() {
       return true; // Fall detected!
     }
     
-    // MODIFIED: Reset the flag if no impact is detected within 1.2 seconds
     if (millis() - freefall_time > 1200) {
       freefall_flag = false;
     }
