@@ -131,7 +131,6 @@ void connectWiFi() {
 
 
 /*************************************************************************
- * NEW FUNCTION: getWifiScanData
  * Scans for nearby WiFi networks and formats them into a single string
  * for the server. Format: "MAC1,RSSI1;MAC2,RSSI2;..."
  ************************************************************************/
@@ -178,7 +177,6 @@ String getWifiScanData() {
 
 
 /*************************************************************************
- * MODIFIED FUNCTION: sendTelegramAlert
  * Now includes the WiFi scan data in the GET request to the server.
  ************************************************************************/
 void sendTelegramAlert(String event_message) {
